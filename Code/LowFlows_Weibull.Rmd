@@ -1,0 +1,176 @@
+---
+title: "Fitting_WeibullDistn"
+author: "Sarah Jordan"
+date: "5/13/2021"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ismev)
+source("utils.R")
+library(ggplot2)
+library(fitdistrplus)
+library(extRemes)
+setwd('C:\\Users\\smjor\\OneDrive - University of Virginia\\Class\\CE5500\\Final\\Code')
+```
+
+## Read in Data 
+
+```{r cars}
+GFDL_sevenQ = read.csv('../Data/GFDL_fullts.csv')
+CCSM_sevenQ = read.csv('../Data/CCSM_fullts.csv')
+
+```
+
+
+```{r}
+weibullReturns = function(sevenQ, method, parm){
+  a = as.vector(sevenQ)
+  print(a)
+  typeof(a)
+  # fit 3-parameter Weibull distribution to 7-day minima
+  if(parm == 3){
+    weibull3.params = Weibull3MOM(as.vector(sevenQ))
+
+  }
+  else{weibull3.params = Weibull2MOM(as.vector(sevenQ))}
+  if(method=="MOM"){
+    if(parm == 3){
+
+    weibull3.fit = fitdist(as.vector(sevenQ), "weibull3", order=c(1,2,3),
+                               memp=memp.centered, start = list(shape=weibull3.params$kappa,
+                                                                scale=weibull3.params$alpha,
+                                                                thres=weibull3.params$xi),
+                               method="mme")
+      plot(weibull3.fit)}
+    else{
+       weibull3.fit = fitdist(as.vector(sevenQ), "weibull", order=c(1,2),
+                               memp=memp.centered, start = list(shape=weibull3.params$kappa,
+                                                                scale=weibull3.params$alpha),
+                              method="mme")
+      plot(weibull3.fit)}
+    }
+
+  if(method=="MLE"){
+    if(parm == 3){
+  weibull3.fit = fitdist(as.vector(sevenQ), "weibull3", 
+                             start = list(shape=weibull3.params$kappa,
+                                          scale=weibull3.params$alpha,
+                                          thres=weibull3.params$xi),
+                             method="mle")
+  
+  plot(weibull3.fit)}
+    else{
+      weibull3.fit = fitdist(as.vector(sevenQ), "weibull", start = list(shape=weibull3.params$kappa,
+                                                                scale=weibull3.params$alpha),
+                             method="mle")
+    }}
+  
+
+  return(weibull3.fit)
+}
+
+```
+
+
+
+```{r}
+GFDL_returnPeriods = list()
+CCSM_returnPeriods = list()
+
+
+calcReturns = function(shape, scale, location, parm){
+  if(parm == 3){
+    q.10 = qweibull3(0.1, 
+                shape =shape,
+                scale =scale,
+                thres=location)}
+  else{
+    print("hullo?")
+    q.10 = qweibull(0.1, 
+                    shape = shape,
+                    scale = scale)
+  }
+
+    return(q.10)
+}
+
+```
+
+
+
+
+```{r}
+createDataFrameStationary = function(o, df, GFDL_MLE, parm){
+    y = o
+    shape = GFDL_MLE[[o]]$estimate[1]
+    scale = GFDL_MLE[[o]]$estimate[2]
+    loc = GFDL_MLE[[o]]$estimate[3]
+    print(shape)
+    print(scale)
+    print(loc)
+    GFDLvalues = calcReturns(shape, scale, loc, parm)
+    
+    # bootstrap the data and re-estimate parameters
+    weibull.boot = bootdist(GFDL_MLE[[o]], bootmethod="nonparam")
+    # compute the 100 and 500-yr floods of each bootstrapped fit
+    m = weibull.boot$nbboot # number of bootstrap replicates
+    q100s.weibull = sapply(1:m, function(i) try(qweibull3(0.1, 
+                                                weibull.boot$estim[i,1], 
+                                                weibull.boot$estim[i,2], 
+                                                weibull.boot$estim[1,3]), 
+                                          TRUE))
+
+
+    # sort all the 100 and 500-yr floods from lowest to highest
+    q100s.weibull = sort(as.numeric(q100s.weibull))
+
+    # compute a 90% confidence interval on the 100 and 500-yr flood estimates
+    m = length(q100s.weibull)
+    GFDL_q100_CI.weibull = c(q100s.weibull[as.integer(0.05*m)], q100s.weibull[as.integer(0.95*m)])
+
+    
+
+    values = c("Obj"=y, "GFDL.q100"=GFDLvalues, "GFDL.q100.90LB" = GFDL_q100_CI.weibull[1], "GFDL.q100.90UB"=GFDL_q100_CI.weibull[2])
+    
+    return(values)
+}
+```
+
+```{r}
+set.seed(15)
+
+GFDL_MLE = list()
+
+for(o in Objectives){
+   if(o == "Hydropower"){
+    GFDL_MLE[[o]] = weibullReturns(GFDL_sevenQ[[o]], "MOM", 3)
+
+}}
+
+hydro.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+env.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+rec.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+sug.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+cot.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+uc.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+
+hydro.df.stationary.hist  = createDataFrameStationary('Hydropower', hydro.df.stationary.hist, GFDL_MLE, 3)
+env.df.stationary.hist = createDataFrameStationary('Environment', env.df.stationary.hist, GFDL_MLE,3)
+rec.df.stationary.hist = createDataFrameStationary('Recession', rec.df.stationary.hist,GFDL_MLE,3)
+sug.df.stationary.hist = createDataFrameStationary('Sugar', sug.df.stationary.hist,GFDL_MLE,3)
+cot.df.stationary.hist = createDataFrameStationary('Cotton', cot.df.stationary.hist,GFDL_MLE,3)
+uc.df.stationary.hist = createDataFrameStationary('Uncontrolled', uc.df.stationary.hist,GFDL_MLE,3)
+```
+
+```{r}
+write.csv(rec.df.stationary.hist, "../Data/Weibull_Rec.csv")
+write.csv(env.df.stationary.hist, "../Data/Weibull_Env.csv")
+write.csv(uc.df.stationary.hist, "../Data/Weibull_Unc.csv")
+```
+
+
+

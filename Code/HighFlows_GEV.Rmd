@@ -1,0 +1,615 @@
+---
+title: "Fitting_GEVDistn"
+author: "Sarah Jordan"
+date: "5/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ismev)
+source("utils.R")
+library(ggplot2)
+library(fitdistrplus)
+library(extRemes)
+setwd('C:\\Users\\smjor\\OneDrive - University of Virginia\\Class\\CE5500\\Final\\Code')
+```
+
+## Read in Data 
+
+```{r cars}
+GFDL_maxQ = read.csv('../Data/GFDL_maxQ.csv')
+CCSM_maxQ = read.csv('../Data/CCSM_maxQ.csv')
+```
+
+## Fit Models
+
+### Stationary
+
+```{r pressure, echo=FALSE}
+GFDL_stat = gev.fit(GFDL_maxQ$Uncontrolled)
+CCSM_stat = gev.fit(CCSM_maxQ$Uncontrolled)
+gev.diag(GFDL_stat)
+gev.diag(CCSM_stat)
+```
+
+The fits on the stationary models actually look decent, but now let's explore non-stationary parameters to see how the model improves or not. 
+
+
+#### Non-Stationary
+
+##### GFDL
+
+First, look at location (mul parameter in gev.fit). 
+
+Resource to guide on non-stationary distributions:
+http://www.mas.ncl.ac.uk/~nlf8/teaching/mas8391/background/chapter5.pdf
+
+```{r}
+# create time feature that will be a proxy of how the parameters are changing over time.
+ti = matrix(ncol=1, nrow=length(GFDL_maxQ$Year))
+ti[,1] = seq(1,length(GFDL_maxQ$Year),1)
+
+# set mul to 1 to have non-stationary location parameter 
+GFDL_mu = gev.fit(GFDL_maxQ$Uncontrolled, ti, mul=1)
+
+# print deviance statistic, which has a chi-quared distn
+D = 2*(-1* GFDL_mu$nllh - (-1*GFDL_stat$nllh))
+print(D)
+```
+The asymptotic distribution of D is given by a Chi-squared distribution with k degrees of freedom, where k is the difference in dimensionality between the two models. With a deviance statistic of 0.05, this is small compared to a $\chi^2_1(0.05) = 3.841$, so we don't like this model. (https://web.ma.utexas.edu/users/davis/375/popecol/tables/chisq.html)
+
+Now look at scale parameter only: 
+
+```{r}
+GFDL_sigl = gev.fit(GFDL_maxQ$Uncontrolled, ti, sigl=1)
+D = 2*(-1* GFDL_sigl$nllh - (-1*GFDL_stat$nllh))
+print(D)
+```
+
+This is sigificant, so scale is non-stationary. Now look at shape:
+```{r}
+GFDL_shl = gev.fit(GFDL_maxQ$Uncontrolled, ti, shl=1)
+D = 2*(-1* GFDL_shl$nllh - (-1*GFDL_stat$nllh))
+print(D)
+```
+Not significant. 
+
+Now look at combinations of each, starting with location and scale:
+
+```{r}
+GFDL_mu_sigl = gev.fit(GFDL_maxQ$Uncontrolled, ti, mul=1, sigl=1)
+D = 2*(-1* GFDL_mu_sigl$nllh - (-1*GFDL_stat$nllh))
+print(D)
+```
+
+How does this compare to scale alone?
+
+```{r}
+D = 2*(-1* GFDL_mu_sigl$nllh - (-1*GFDL_sigl$nllh))
+print(D) 
+```
+Here we added 1 degree of freedom, so it's still above that 3.84 threshold. 
+
+Now let's look at shape, scale, and location all together:
+
+```{r}
+GFDL_mu_sigl_shl = gev.fit(GFDL_maxQ$Uncontrolled, ti, mul=1, sigl=1, shl =1)
+D = 2*(-1* GFDL_mu_sigl_shl$nllh - (-1*GFDL_stat$nllh))
+print(D)
+```
+
+Non-stationary scale and location parameters are best for GFDL. Now lets' go through the same process for CCSM projection.
+
+##### GFDL
+```{r}
+print("------loc--------------")
+CCSM_mu = gev.fit(CCSM_maxQ$Uncontrolled, ti, mul=1)
+D = 2*(-1* CCSM_mu$nllh - (-1*CCSM_stat$nllh))
+print(D)
+print("------loc,scale------------")
+CCSM_mu_sigl = gev.fit(CCSM_maxQ$Uncontrolled, ti, mul=1, sigl=1)
+D = 2*(-1* CCSM_mu_sigl$nllh - (-1*CCSM_stat$nllh))
+print(D)
+
+print("------all3------------")
+CCSM_mu_sigl_shl = gev.fit(CCSM_maxQ$Uncontrolled, ti, mul=1, sigl=1, shl=1)
+D = 2*(-1* CCSM_mu_sigl_shl$nllh - (-1*CCSM_stat$nllh))
+print(D)
+```
+Same result. Best model for CCSM is also non-stationary with mu and sigma as a function of time. 
+
+
+
+### Fit all Models
+
+We will assume this distribution for all reservoir operations as well; a more thorough study could take care to fit each individually to its non-stationary parameters. But we will assume location adn scale are non-stationary for all options.
+```{r}
+GFDL = list()
+CCSM = list()
+Objectives = list("Hydropower", "Environment", "Recession", "Cotton", "Sugar","Uncontrolled")
+for(o in Objectives){
+    print(o)
+    a = gev.fit(as.numeric(unlist(GFDL_maxQ[o])), ti, mul=1, sigl=1)
+    GFDL[[o]] = a$mle 
+    b = gev.fit(as.numeric(unlist(CCSM_maxQ[o])), ti, mul=1, sigl=1)
+    CCSM[[o]] = b$mle 
+
+} 
+```
+
+
+
+
+
+
+
+### Calculate mu and sigma over time
+
+```{r}
+GFDL_mus = list()
+CCSM_mus = list()
+
+for(o in Objectives){
+    i = seq(1989, 2099, 1)
+    mus = lapply(i, function(x) GFDL[[o]][1] + GFDL[[o]][2]*(x - 1988))
+    GFDL_mus[[o]] = mus
+    mus = lapply(i, function(x) CCSM[[o]][1] + CCSM[[o]][2]*(x - 1989 + 1))
+    CCSM_mus[[o]] = mus
+}
+
+
+GFDL_sigs = list()
+CCSM_sigs = list()
+for(o in Objectives){
+    i = seq(1989, 2099, 1)
+    sigs = lapply(i, function(x) GFDL[[o]][3] + GFDL[[o]][4]*(x - 1988))
+    GFDL_sigs[[o]] = sigs
+    sigs = lapply(i, function(x) CCSM[[o]][3] + CCSM[[o]][4]*(x - 1989 + 1))
+    CCSM_sigs[[o]] = sigs
+}
+```
+
+```{r}
+ggplot() + 
+    # geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Hydropower)), color="Hydropower")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Hydropower)), color="Hydropower")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Environment)), color="Environment")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Environment)), color="Environment")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Recession)), color="Recession")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Recession)), color="Recession")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Sugar)), color="Sugar")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Sugar)), color="Sugar")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Cotton)), color="Cotton")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Cotton)), color="Cotton")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Uncontrolled)), color="Uncontrolled")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Uncontrolled)), color="Uncontrolled")) + 
+scale_color_manual(values = c("Hydropower" = "grey", 
+                             "Environment" = "green", 
+                             "Recession" = "blue", 
+                             "Sugar" = "purple", 
+                             "Cotton" = "orange",
+                             "Uncontrolled" = "black"))+ 
+labs(color='Legend') +
+ylab("Mu") +
+xlab("Year") + 
+    ylim(1000,4000) + 
+    ggtitle("GFDL-ESM2G.rcp26")
+
+ggsave('../Figures/MuPlot_GFDL.png')
+```
+```{r}
+ggplot() + 
+    geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Hydropower)), color="Hydropower")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Hydropower)), color="Hydropower")) + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Environment)), color="Environment")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Environment)), color="Environment")) + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Recession)), color="Recession")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Recession)), color="Recession")) + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Sugar)), color="Sugar")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Sugar)), color="Sugar")) + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Cotton)), color="Cotton")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Cotton)), color="Cotton")) + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_mus$Uncontrolled)), color="Uncontrolled")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_mus$Uncontrolled)), color="Uncontrolled")) + 
+scale_color_manual(values = c("Hydropower" = "grey", 
+                             "Environment" = "green", 
+                             "Recession" = "blue", 
+                             "Sugar" = "purple", 
+                             "Cotton" = "orange",
+                             "Uncontrolled" = "black"))+ 
+labs(color='Legend') +
+ylab("Mu") +
+xlab("Year") + 
+    ylim(1000,4000) + 
+    ggtitle("CCSM4.rcp85")
+
+ggsave('../Figures/MuPlot_CCSM.png')
+```
+
+```{r}
+ggplot() + 
+    geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Hydropower)), color="Hydropower")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Hydropower)), color="Hydropower"),lty="dashed") + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Environment)), color="Environment")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Environment)), color="Environment"),lty="dashed") + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Recession)), color="Recession")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Recession)), color="Recession"),lty="dashed") + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Sugar)), color="Sugar")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Sugar)), color="Sugar"), lty="dashed") + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Cotton)), color="Cotton")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Cotton)), color="Cotton"), lty="dashed") + 
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Uncontrolled)), color="Uncontrolled")) +
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Uncontrolled)), color="Uncontrolled"), lty="dashed") + 
+scale_color_manual(values = c("Hydropower" = "grey", 
+                             "Environment" = "green", 
+                             "Recession" = "blue", 
+                             "Sugar" = "purple", 
+                             "Cotton" = "orange",
+                             "Uncontrolled" = "black"))+ 
+labs(color='Legend') +
+ylab("Sigma") +
+xlab("Year") +
+    ylim(0,2100) + 
+    ggtitle("CCSM4.rcp85")
+
+ggsave('../Figures/SigmaPlot_CCSM.png')
+```
+```{r}
+ggplot() + 
+    #geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Hydropower)), color="Hydropower")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Hydropower)), color="Hydropower")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Environment)), color="Environment")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Environment)), color="Environment")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Recession)), color="Recession")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Recession)), color="Recession")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Sugar)), color="Sugar")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Sugar)), color="Sugar")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Cotton)), color="Cotton")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Cotton)), color="Cotton")) + 
+#geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(CCSM_sigs$Uncontrolled)), color="Uncontrolled")) +
+geom_line(aes(x=c(seq(1989, 2099)), y =as.numeric(unlist(GFDL_sigs$Uncontrolled)), color="Uncontrolled")) + 
+scale_color_manual(values = c("Hydropower" = "grey", 
+                             "Environment" = "green", 
+                             "Recession" = "blue", 
+                             "Sugar" = "purple", 
+                             "Cotton" = "orange",
+                             "Uncontrolled" = "black"))+ 
+labs(color='Legend') +
+ylab("Sigma") +
+xlab("Year") +
+    ylim(0,2100) + 
+    ggtitle("GFDL-ESM2G.rcp26")
+
+ggsave('../Figures/SigmaPlot_GFDL.png')
+```
+
+### Return Periods
+```{r}
+GFDL_returnPeriods = list()
+CCSM_returnPeriods = list()
+
+
+calcReturns = function(shape, scale, location){
+    q.100 = qgev(1-1/100, 
+                shape =shape,
+                scale =scale,
+                location=location)
+    q.500 = qgev(1-1/500, 
+            shape =shape,
+            scale =scale,
+            location=location)
+    return(list("q100"=q.100, "q500"=q.500))
+}
+
+
+hydro.df = data.frame(matrix(ncol=5, nrow=0))
+env.df = data.frame(matrix(ncol=5, nrow=0))
+rec.df = data.frame(matrix(ncol=5, nrow=0))
+sug.df = data.frame(matrix(ncol=5, nrow=0))
+cot.df = data.frame(matrix(ncol=5, nrow=0))
+uc.df = data.frame(matrix(ncol=5, nrow=0))
+
+# colnames(hydro.df) =c("Year", "GFDL.q100", "GFDL.q500", "CCSM.q100", "CCSM.q500")
+
+
+returnPeriods = c("Hydropower" = hydro.df, "Environment" = env.df, "Recession" = rec.df, "Sugar" = sug.df, "Cotton" = cot.df, "Uncontrolled" = uc.df)
+
+years = seq(1989, 2099,1)
+
+createDataFrame = function(o, df,years){
+    for(y in years){
+        shape = GFDL[[o]][5]
+        scale = as.numeric(unlist(GFDL_sigs[[o]][y - 1988]))
+        loc = as.numeric(unlist(GFDL_mus[[o]][y - 1988]))
+        GFDLvalues = calcReturns(shape, scale, loc)
+        shape = CCSM[[o]][5]
+        scale = as.numeric(unlist(CCSM_sigs[[o]][y - 1988]))
+        loc = as.numeric(unlist(CCSM_mus[[o]][y - 1988]))
+        CCSMvalues = calcReturns(shape, scale, loc)
+
+        values = c(y, GFDLvalues$q100, GFDLvalues$q500, CCSMvalues$q100, CCSMvalues$q500)
+        df = rbind(df, values)
+        
+}
+    colnames(df) = c("Year", "GFDL.q100", "GFDL.q500", "CCSM.q100", "CCSM.q500")
+    return(df)
+}
+
+
+
+```
+
+
+
+
+
+```{r}
+hydro.df  = createDataFrame('Hydropower', hydro.df,years)
+env.df = createDataFrame('Environment', env.df,years)
+rec.df = createDataFrame('Recession', rec.df,years)
+sug.df = createDataFrame('Sugar', sug.df,years)
+cot.df = createDataFrame('Cotton', cot.df,years)
+uc.df = createDataFrame('Uncontrolled', uc.df,years)
+```
+
+
+Confidence intervals 
+
+```{r}
+set.seed(1)
+
+hydro.df.CI = data.frame(matrix(ncol=4, nrow=0))
+env.df.CI = data.frame(matrix(ncol=4, nrow=0))
+rec.df.CI = data.frame(matrix(ncol=4, nrow=0))
+sug.df.CI = data.frame(matrix(ncol=4, nrow=0))
+cot.df.CI = data.frame(matrix(ncol=4, nrow=0))
+uc.df.CI = data.frame(matrix(ncol=4, nrow=0))
+
+# colnames(hydro.df) =c("Year", "GFDL.q100", "GFDL.q500", "CCSM.q100", "CCSM.q500")
+
+
+
+years = seq(1989, 2099,1)
+
+createDataFrame = function(o, df,years){
+    for(y in years){
+        shape = GFDL[[o]][5]
+        scale = as.numeric(unlist(GFDL_sigs[[o]][y - 1988]))
+        loc = as.numeric(unlist(GFDL_mus[[o]][y - 1988]))
+        
+        
+        shape = CCSM[[o]][5]
+        scale = as.numeric(unlist(CCSM_sigs[[o]][y - 1988]))
+        loc = as.numeric(unlist(CCSM_mus[[o]][y - 1988]))
+        CCSMvalues = calcReturns(shape, scale, loc)
+
+        values = c(y, GFDLvalues$q100, GFDLvalues$q500, CCSMvalues$q100, CCSMvalues$q500)
+        df = rbind(df, values)
+        
+}
+    colnames(df) = c("Year", "GFDL.q100", "GFDL.q500", "CCSM.q100", "CCSM.q500")
+    return(df)
+}
+
+
+```
+
+
+
+### What if we assumed a stationary distribution with all of this data?
+```{r}
+GFDL_params = list()
+CCSM_params = list()
+
+for(o in Objectives){
+    GFDL_params[[o]] = gevMOM(as.numeric(unlist(GFDL_maxQ[o])))
+    CCSM_params[[o]] = gevMOM(as.numeric(unlist(CCSM_maxQ[o])))
+
+}
+
+GFDL_MLE = list()
+CCSM_MLE = list()
+
+for(o in Objectives){
+    print(o)
+    print("GFDL")
+    GFDL_MLE[[o]] = fitdist(GFDL_maxQ[[o]], "gev", 
+                           start=list(shape=GFDL_params[[o]]$kappa,
+                                     scale = GFDL_params[[o]]$alpha,
+                                     location = GFDL_params[[o]]$xi),
+                           method="mle")
+    plot(GFDL_MLE[[o]])
+    print("CCSM")
+    CCSM_MLE[[o]] = fitdist(as.numeric(unlist(CCSM_maxQ[[o]])), "gev", 
+                       start=list(shape=CCSM_params[[o]]$kappa,
+                                 scale = CCSM_params[[o]]$alpha,
+                                 location = CCSM_params[[o]]$xi),
+                       method="mle")
+    plot(CCSM_MLE[[o]])
+
+}
+```
+
+```{r}
+hydro.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+env.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+rec.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+sug.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+cot.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+uc.df.stationary = data.frame(matrix(ncol=5, nrow=0))
+
+
+createDataFrameStationary = function(o, df, GFDL_MLE, CCSM_MLE){
+    y = o
+    shape = GFDL_MLE[[o]]$estimate[1]
+    scale = GFDL_MLE[[o]]$estimate[2]
+    loc = GFDL_MLE[[o]]$estimate[3]
+    GFDLvalues = calcReturns(shape, scale, loc)
+    
+    # bootstrap the data and re-estimate parameters
+    gev.boot = bootdist(GFDL_MLE[[o]], bootmethod="nonparam")
+
+    # compute the 100 and 500-yr floods of each bootstrapped fit
+    m = gev.boot$nbboot # number of bootstrap replicates
+    q100s.gev = sapply(1:m, function(i) try(qgev(1-1/100, 
+                                                gev.boot$estim[i,1], 
+                                                gev.boot$estim[i,2], 
+                                                gev.boot$estim[1,3]), 
+                                          TRUE))
+    q500s.gev = sapply(1:m, function(i) try(qgev(1-1/500, 
+                                                gev.boot$estim[i,1], 
+                                                gev.boot$estim[i,2],
+                                                gev.boot$estim[i,3]), 
+                                        TRUE))
+
+    # sort all the 100 and 500-yr floods from lowest to highest
+    q100s.gev = sort(as.numeric(q100s.gev))
+    q500s.gev = sort(as.numeric(q500s.gev))
+    q100s.gev = head(q100s.gev, -1)
+    q500s.gev = head(q500s.gev, -1)
+    
+    # compute a 90% confidence interval on the 100 and 500-yr flood estimates
+    m = length(q100s.gev)
+    GFDL_q100_CI.gev = c(q100s.gev[as.integer(0.05*m)], q100s.gev[as.integer(0.95*m)])
+    GFDL_q500_CI.gev = c(q500s.gev[as.integer(0.05*m)], q500s.gev[as.integer(0.95*m)])
+
+    
+    shape = CCSM_MLE[[o]]$estimate[1]
+    scale = CCSM_MLE[[o]]$estimate[2]
+    loc = CCSM_MLE[[o]]$estimate[3]
+    CCSMvalues = calcReturns(shape, scale, loc)
+    
+    
+    # bootstrap the data and re-estimate parameters
+    gev.boot = bootdist(CCSM_MLE[[o]], bootmethod="nonparam")
+
+    # compute the 100 and 500-yr floods of each bootstrapped fit
+    m = gev.boot$nbboot # number of bootstrap replicates
+    q100s.gev = sapply(1:m, function(i) try(qgev(1-1/100, 
+                                                gev.boot$estim[i,1], 
+                                                gev.boot$estim[i,2],
+                                                gev.boot$estim[i,3]), 
+                                          TRUE))
+    q500s.gev = sapply(1:m, function(i) try(qgev(1-1/500, 
+                                                gev.boot$estim[i,1], 
+                                                gev.boot$estim[i,2],
+                                                gev.boot$estim[i,3]), 
+                                        TRUE))
+
+    # sort all the 100 and 500-yr floods from lowest to highest
+    q100s.gev = sort(as.numeric(q100s.gev))
+    q500s.gev = sort(as.numeric(q500s.gev))
+
+    # compute a 90% confidence interval on the 100 and 500-yr flood estimates
+    m = length(q100s.gev)
+    CCSM_q100_CI.gev = c(q100s.gev[as.integer(0.05*m)], q100s.gev[as.integer(0.95*m)])
+    CCSM_q500_CI.gev = c(q500s.gev[as.integer(0.05*m)], q500s.gev[as.integer(0.95*m)])
+    
+    print(GFDL_q100_CI.gev)
+    print(GFDL_q500_CI.gev)
+    print(CCSM_q100_CI.gev)
+    print(CCSM_q500_CI.gev)
+    values = c("Obj"=y, "GFDL.q100"=GFDLvalues$q100, "GFDL.q100.90LB" = GFDL_q100_CI.gev[1], "GFDL.q100.90UB"=GFDL_q100_CI.gev[2], "GFDL.q500"= GFDLvalues$q500, "GFDL.q500.90LB" = GFDL_q500_CI.gev[1], "GFDL.q500.90UB"=GFDL_q500_CI.gev[2], "CCSM.q100"=CCSMvalues$q100, "CCSM.q100.90LB" = CCSM_q100_CI.gev[1], "CCSM.q100.90UB"=CCSM_q100_CI.gev[2],"CCSM.q500"=CCSMvalues$q500,"CCSM.q500.90LB" = CCSM_q500_CI.gev[1], "CCSM.q500.90UB"=CCSM_q500_CI.gev[2])
+    
+    return(values)
+}
+
+
+hydro.df.stationary  = createDataFrameStationary('Hydropower', hydro.df.stationary)
+env.df.stationary = createDataFrameStationary('Environment', env.df.stationary)
+rec.df.stationary = createDataFrameStationary('Recession', rec.df.stationary)
+sug.df.stationary = createDataFrameStationary('Sugar', sug.df.stationary)
+cot.df.stationary = createDataFrameStationary('Cotton', cot.df.stationary)
+uc.df.stationary = createDataFrameStationary('Uncontrolled', uc.df.stationary)
+
+
+```
+
+```{r}
+write.csv(hydro.df.stationary, '../Data/StatCI_Hyd.csv')
+write.csv(env.df.stationary, '../Data/StatCI_Env.csv')
+write.csv(rec.df.stationary, '../Data/StatCI_Rec.csv')
+write.csv(sug.df.stationary, '../Data/StatCI_Sug.csv')
+write.csv(cot.df.stationary, '../Data/StatCI_Cot.csv')
+write.csv(uc.df.stationary, '../Data/StatCI_Unc.csv')
+
+
+```
+
+```{r}
+write.csv(hydro.df, '../Data/ReturnPeriods_Hyd.csv')
+write.csv(env.df, '../Data/ReturnPeriods_Env.csv')
+write.csv(rec.df, '../Data/ReturnPeriods_Rec.csv')
+write.csv(sug.df, '../Data/ReturnPeriods_Sug.csv')
+write.csv(cot.df, '../Data/ReturnPeriods_Cot.csv')
+write.csv(uc.df, '../Data/ReturnPeriods_Unc.csv')
+```
+
+
+#### Now what if we only looked at historical data?
+```{r}
+set.seed(15)
+GFDL_hist = GFDL_maxQ[which(GFDL_maxQ$Year < 2019),]
+CCSM_hist = CCSM_maxQ[which(CCSM_maxQ$Year < 2019),]
+
+GFDL_params = list()
+CCSM_params = list()
+
+for(o in Objectives){
+    GFDL_params[[o]] = gevMOM(as.numeric(unlist(GFDL_hist[o])))
+    CCSM_params[[o]] = gevMOM(as.numeric(unlist(CCSM_hist[o])))
+
+}
+
+GFDL_MLE = list()
+CCSM_MLE = list()
+
+for(o in Objectives){
+    print(o)
+    print("GFDL")
+    GFDL_MLE[[o]] = fitdist(GFDL_hist[[o]], "gev", 
+                            order=c(1,2,3), memp=memp.centered,
+
+                           start=list(shape=GFDL_params[[o]]$kappa,
+                                     scale = GFDL_params[[o]]$alpha,
+                                     location = GFDL_params[[o]]$xi),
+                           method="mme")
+    plot(GFDL_MLE[[o]])
+    print("CCSM")
+    CCSM_MLE[[o]] = fitdist(as.numeric(unlist(CCSM_hist[[o]])), "gev", 
+                      order=c(1,2,3), memp=memp.centered,
+
+                       start=list(shape=CCSM_params[[o]]$kappa,
+                                 scale = CCSM_params[[o]]$alpha,
+                                 location = CCSM_params[[o]]$xi),
+                       method="mme")
+    plot(CCSM_MLE[[o]])
+
+}
+
+hydro.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+env.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+rec.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+sug.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+cot.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+uc.df.stationary.hist = data.frame(matrix(ncol=5, nrow=0))
+
+hydro.df.stationary.hist  = createDataFrameStationary('Hydropower', hydro.df.stationary.hist, GFDL_MLE, CCSM_MLE)
+env.df.stationary.hist = createDataFrameStationary('Environment', env.df.stationary.hist, GFDL_MLE, CCSM_MLE)
+rec.df.stationary.hist = createDataFrameStationary('Recession', rec.df.stationary.hist,GFDL_MLE, CCSM_MLE)
+sug.df.stationary.hist = createDataFrameStationary('Sugar', sug.df.stationary.hist,GFDL_MLE, CCSM_MLE)
+cot.df.stationary.hist = createDataFrameStationary('Cotton', cot.df.stationary.hist,GFDL_MLE, CCSM_MLE)
+uc.df.stationary.hist = createDataFrameStationary('Uncontrolled', uc.df.stationary.hist,GFDL_MLE, CCSM_MLE)
+
+```
+```{r}
+write.csv(hydro.df.stationary.hist, '../Data/HistStatCIMLE_Hyd.csv')
+write.csv(env.df.stationary.hist, '../Data/HistStatCIMLE_Env.csv')
+write.csv(rec.df.stationary.hist, '../Data/HistStatCIMLE_Rec.csv')
+write.csv(cot.df.stationary.hist, '../Data/HistStatCIMLE_Cot.csv')
+write.csv(sug.df.stationary.hist, '../Data/HistStatCIMLE_Sug.csv')
+write.csv(uc.df.stationary.hist, '../Data/HistStatCIMLE_Unc.csv')
+```
+
